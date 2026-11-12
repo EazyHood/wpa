@@ -1,0 +1,41 @@
+name: Validate source map snapshot
+on:
+  push:
+    branches: [validate-88]
+permissions:
+  contents: read
+jobs:
+  regression:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '25'
+          cache: maven
+      - name: Confirm the original implementation fails the regression
+        run: |
+          git show 0d58453267a146aeb2eee65d10c6afb98685b4f9:src/main/java/org/eolang/wpa/Program.java > src/main/java/org/eolang/wpa/Program.java
+          set +e
+          mvn -B -ntp -Dtest=ProgramTest#keepsSourcesAfterCallerClearsMap test
+          result=$?
+          set -e
+          test "$result" -ne 0
+          python3 - <<'PY'
+          import xml.etree.ElementTree as ET
+          report = ET.parse('target/surefire-reports/TEST-org.eolang.wpa.ProgramTest.xml').getroot()
+          assert report.attrib['tests'] == '1' and report.attrib['failures'] == '1', report.attrib
+          assert report.attrib['errors'] == '0' and report.attrib['skipped'] == '0', report.attrib
+          PY
+          git restore --source=HEAD -- src/main/java/org/eolang/wpa/Program.java
+      - name: Run the complete build and quality checks
+        run: mvn -B -ntp clean install -Pqulice
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: source-map-test-results
+          path: target/surefire-reports
